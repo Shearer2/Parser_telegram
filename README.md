@@ -45,6 +45,7 @@ try:
             """SELECT login FROM telegram.telegram_logins"""          #
         )                                                             #
         name_channel = list(map(lambda x: x[0], cursor.fetchall()))   #
+    
 except Exception as _ex:
     print('[INFO] Error while working with MySql', _ex)
 finally:
@@ -54,3 +55,43 @@ finally:
 ```
 Решётками (**#**) помечены новые участки кода. Для начала я создал контекстный менеджер, в котором и осуществляется сбор всей необходимой информации из таблицы **_telegram_logins_**. Метод **_cursor.execute_** позволяет выполнять с базой данных ту операцию, которая в нём записана. Поэтому я написал, что нужно из таблицы **_telegram_logins_**, которая находится в базе данных **_telegram_**, взять информацию из столбца **_login_**. Метод **_cursor.fetchall_** позволяет вывести сразу всю информацию в виде кортежа, поэтому в **_lambda_** функции я указал, что нужно брать только элемент с нулевым индексом и заносить его в список. Функция **_map_** позволяет выполнять подобные действия, так как она изменяет содержимое изначального объекта. В конечном итоге мы получили список со всеми именами групп в телеграме.
 
+Но для парсинга информации из телеграм каналов не достаточно только взаимодействовать с базой данных. Поэтому я воспользовался модулем **BeautifulSoup4**, который позволяет собирать информацию с любого сайта, в данном случае я использовал телеграм каналы. Сбор информации производится следующим образом:
+```
+try:
+    connection = connect(
+        host='localhost',
+        user=input('Введите имя пользователя: '),
+        password=input('Введите пароль от базы данных: ')
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """SELECT login FROM telegram.telegram_logins"""
+        )
+        name_channel = list(map(lambda x: x[0], cursor.fetchall()))
+
+    for i in range(len(name_channel)):                                                                             #
+        r = requests.get(f'https://t.me/s/{name_channel[i]}/')                                                     #
+        html = BS(r.content, 'html.parser')                                                                        #
+        id = category_id = i + 1                                                                                   #
+        title, short_text, content = text_news(html)                                                               #
+        deleted_at, created_at, update_at, dateofevent, created = date_news(html)                                  #
+        main_news = len(html.findAll('div', class_='tgme_widget_message_wrap js-widget_message_wrap'))             #
+        slug = 'Null'                                                                                              #
+        organizer = html.findAll('div', class_='tgme_widget_message_author accent_color')[-1].text.strip()         #
+        place = organizer                                                                                          #
+        view_count = html.findAll('span', class_='tgme_widget_message_views')[-1].text                             #
+        main_photo = ', '.join(photo_news(html))                                                                   #
+        main_video = ', '.join(video_news(html))                                                                   #
+        main_audio = ', '.join(audio_news(html))                                                                   #
+        main_pva = main_photo + main_video + main_audio                                                            #
+        
+except Exception as _ex:
+    print('[INFO] Error while working with MySql', _ex)
+finally:
+    if connection:
+        connection.close()
+        print('[INFO] MySql connection closed')
+```
+Для сбора сведений достаточно знать _структуру html документа_, именно по ней, а точнее по тегам и данным им классам производится поиск. Но прежде чем приступать к сбору информации необходимо воспользоваться модулем **requests**. Данный модуль позволяет отправлять запрос на сайт и получать информацию, которая и будет демонстрировать, есть доступ к странице или нет, но это не весь функционал представленного модуля. Если запрос успешен, то мы получаем код **200**. Для начала был создан цикл, на основе количества названий каналов, затем каждый канал проверялся на получение доступа к нему. После этого начиналось использование **BeautifulSoup4**, в котором был указан _'html.parser'_, то есть какую информацию мы хотим получить, в данном случае _html-код_ страницы. Далее осуществлялся поиск информации по просмотру кода страницы и нахождению нужных тегов.
+
+Были объявлены переменные, в которых будет храниться конечный результат, вычисляемый в функциях. Для того чтобы взять какой-то определённый тег используется **html.findAll('название_тега', class_='название_класса')**, далее я указывал **[-1]**, так как в моём случае поиск осуществлялся последнего поста. Если указать **[-2]**, то будет найден предпоследний пост и т.д. Если нам нужно получить текстовый формат той информации, которая хранится в последнем посте, то нужно дописать **.text**, если мы не укажем, что хотим получить текст, то у нас будет выведен полный тег, информацию из которого мы хотели получить.
