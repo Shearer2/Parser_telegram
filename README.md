@@ -127,3 +127,98 @@ def text_news(html) -> tuple:                                                   
 Но так как при считывании текста в теге присутствуют теги _br/_, то они попадают в наш список в виде пустых строк, поэтому был использован проход по списку до тех пор, пока в нём не будут удалены все пустые элементы. Через функцию **filter** были оставлены элементы, которые дают результат **True**, далее у каждого элемента были удалены пробелы в начале и в конце строки, так как ссылки отделялись от основного текста и попадали в список как отдельные элементы. Поэтому дальше осуществлялся проход по списку и если нулевой индекс следующего элемента присутствовал в переменной **ru_alf** со строчными русскими буквами, то к предыдущему элементу присоединялся данный элемент конкатенацией, а сам присоединённый элемент становился пустым.
 
 После завершения цикла была проведена проверка на наличие эмодзи в качестве первого элемента и присоединения к нему второго элемента, если условие оказывалось истинным.
+
+Для получения даты публикации поста была написана функция **date_news**:
+```
+def date_news(html) -> list:                                                                                       #
+    date = ' '.join(html.findAll('time', class_='time')[-1].attrs['datetime'].split('T'))                          #
+    return [date for i in range(5)]                                                                                #
+```
+Дата публикации поста хранится в специальном теге _time_ с классом _time_. Но так как само время не является обычным текстом и хранится в специальном атрибуте _datetime_, то мы указываем данный атрибут в **.attrs**, чтобы получить его содержимое. Далее мы разделяем время на две части по букве _T_, так как в базу данных время без разделения по данной букве не будет занесено.
+
+Для получения фотографий с поста используется следующий код:
+```
+def photo_news(html) -> list:                                                                                      #
+    last_news_photo = html.findAll('div', class_='tgme_widget_message_bubble')[-1]                                 #
+    photo = last_news_photo.findAll('a', class_='tgme_widget_message_photo_wrap')                                  #
+    main_photo = []                                                                                                #
+    for i in range(len(photo)):                                                                                    #
+        res_photo = photo[i].attrs['style']                                                                        #
+        main_photo.append(res_photo[res_photo.find("('") + 2:-2])                                                  #
+    return main_photo                                                                                              #
+```
+Первым делом мы берём последний тег, в котором хранится последний опубликованный пост. Далее мы берём все теги _a_, в которых и находятся изображения и проходимся по каждому из них в цикле, забирая только информацию из атрибута _style_. Но так как там содержится не только ссылка на изображение, то мы получаем и лишнюю информацию, поэтому выполняем поиск **"('"**, с которого и начинается ссылка на изображение и при помощи срезов добавляем нужную нам информацию в окончательный список.
+
+Для получения видео и аудио использовался практически идентичный код:
+```
+def video_news(html) -> list:                                                                                      #
+    last_news_video = html.findAll('div', class_='tgme_widget_message_bubble')[-1]                                 #
+    video = last_news_video.findAll('video', class_='tgme_widget_message_video js-message_video')                  #
+    main_video = [video[i].attrs['src'] for i in range(len(video))]                                                #
+    return main_video                                                                                              #
+```
+```
+def audio_news(html) -> list:                                                                                      #
+    last_news_audio = html.findAll('div', class_='tgme_widget_message_bubble')[-1]                                 #
+    audio = last_news_audio.findAll('audio', class_='tgme_widget_message_voice js-message_voice')                  #
+    main_audio = [audio[i].attrs['src'] for i in range(len(audio))]                                                #
+    return main_audio                                                                                              #
+```
+Только для каждой функции берётся свой тег, а затем вызывается атрибут _src_, содержащий уже готовую ссылку.
+
+Последний шаг, который нам нужно выполнить, это занести все полученные данные в _базу данных MySql_. Подобное действие выполняется точно также, как если бы вы хотели сделать это в самой базе данных. Окончательный результат для блоков **try - except - finally**:
+```
+try:
+    connection = connect(
+        host='localhost',
+        user=input('Введите имя пользователя: '),
+        password=input('Введите пароль от базы данных: ')
+    )
+    connection.autocommit = True                                                                                    #
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """SELECT login FROM telegram.telegram_logins"""
+        )
+        name_channel = list(map(lambda x: x[0], cursor.fetchall()))
+
+    for i in range(len(name_channel)):
+        r = requests.get(f'https://t.me/s/{name_channel[i]}/')
+        html = BS(r.content, 'html.parser')
+        id = category_id = i + 1
+        title, short_text, content = text_news(html)
+        deleted_at, created_at, update_at, dateofevent, created = date_news(html)
+        main_news = len(html.findAll('div', class_='tgme_widget_message_wrap js-widget_message_wrap'))
+        slug = 'Null'
+        organizer = html.findAll('div', class_='tgme_widget_message_author accent_color')[-1].text.strip()
+        place = organizer
+        view_count = html.findAll('span', class_='tgme_widget_message_views')[-1].text
+        main_photo = ', '.join(photo_news(html))
+        main_video = ', '.join(video_news(html))
+        main_audio = ', '.join(audio_news(html))
+        main_pva = main_photo + main_video + main_audio
+
+        with connection.cursor() as cursor:                                                                          #
+            cursor.execute(f'''                                                                                      #
+                update telegram.news set                                                                             #
+                id = {id}, category_id = {category_id}, main_photo = '[{main_pva}]', title = '{title}',              #
+                short_text = '{short_text}', content = '{content}', deleted_at = '{deleted_at}',                     #
+                created_at = '{created_at}', update_at = '{update_at}', main_news = '{main_news}', slug = {slug},    #
+                dateofevent = '{dateofevent}', organizer = '{organizer}', place = '{place}', created = '{created}',  #
+                view_count = '{view_count}'                                                                          #
+                where id = {id}                                                                                      #
+            ''')                                                                                                     #
+            print('[INFO] Data was successfully update.')                                                            #
+
+
+except Exception as _ex:
+    print('[INFO] Error while working with MySql', _ex)
+finally:
+    if connection:
+        connection.close()
+        print('[INFO] MySql connection closed')
+```
+Здесь мы использовали контекстный менеджер для обновления значений в базе данных. В метод **cursor.execute** мы поместили нужную нам операцию, то есть обновление _базы данных telegram_ с таблицей _news_ необходимой информацией по значению столбца **id**. Чтобы применить все полученные изменения и отобразить их в самой базе данных используется команда **connection.autocommit = True**.
+
+Весь приведённый код содержится в папке _telegram_parser_ в файле _parser.py_, а сама база данных хранится в файле _parser_db.sql_. Для обновления информации в таблице news достаточно запустить программу и парсинг выполнится автоматически.
+
+Также есть возможность добавления большего количества каналов для сбора информации. Для этого достаточно добавить наименование каналов в таблицу _telegram_logins_, а затем добавить новые строки в таблицу _news_.
