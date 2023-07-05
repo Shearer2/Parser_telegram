@@ -1,3 +1,4 @@
+import datetime
 import requests
 from mysql.connector import connect
 from bs4 import BeautifulSoup as BS
@@ -5,6 +6,8 @@ from bs4 import BeautifulSoup as BS
 
 def text_news(html) -> tuple:
     ru_alf = 'абвгдеёжзийклмнопрстуфхцчшщъыьэюя'
+    # Добавляю информацию для удаления из текста.
+    information_to_delete = ["Подпишись на канал"]
     last_news_text = html.findAll('div', class_='tgme_widget_message_bubble')[-1]
     # Если тег с сообщениями присутствует, то выполняется условие.
     if last_news_text.findAll('div', class_='tgme_widget_message_text js-message_text'):
@@ -25,6 +28,15 @@ def text_news(html) -> tuple:
             del result[1]
         title = short_text = result[0]
         content = ' '.join(result[1:])
+        # Берём каждый элемент из списка для удаления.
+        for inf in information_to_delete:
+            # Проверяем есть ли данный элемент в заголовке и в коротком описании.
+            if inf in title:
+                # Если элемент присутствует в тексте, то заменяем его на пустую строку.
+                title = short_text = title.replace(inf, '')
+            # Проверяем если ли данный элемент в контенте.
+            if inf in content:
+                content = content.replace(inf, '')
         return title, short_text, content
     return '', '', ''
 
@@ -82,12 +94,23 @@ try:
         # Собираем все записи в список.
         name_channel = list(map(lambda x: x[0], cursor.fetchall()))
 
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """SELECT created FROM telegram.news"""
+        )
+        data_created = list(map(lambda x: x[0], cursor.fetchall()))
+
     for i in range(len(name_channel)):
         r = requests.get(f'https://t.me/s/{name_channel[i]}/')  # Проверяем соединение со страницей.
         html = BS(r.content, 'html.parser')  # Получаем весь код страницы.
         id = category_id = i + 1  # Идентификатор по соответствию нумерации в цикле.
         title, short_text, content = text_news(html)  # Здесь хранится текст.
         deleted_at, created_at, update_at, dateofevent, created = date_news(html)  # Здесь хранится дата.
+        # Переводим время в нужный нам часовой пояс, так как при получении данных из базы данных оно переводится в наш
+        # часовой пояс.
+        time_without_timezone = created.split('+')[0]
+        time_desired_timezone = str((int(created.split('+')[0][-8:-6]) + 3) % 24).zfill(2)
+        date_moscow_time_zone = time_without_timezone[:-8] + time_desired_timezone + time_without_timezone[-6:]
         # Количество всех новостей.
         main_news = len(html.findAll('div', class_='tgme_widget_message_wrap js-widget_message_wrap'))
         slug = 'Null'  # Не понял, что это такое.
@@ -99,18 +122,20 @@ try:
         main_audio = ', '.join(audio_news(html))  # Все аудио с последнего поста, если они есть.
         main_pva = main_photo + main_video + main_audio
 
-        # Используем контекстный менеджер для обновления значений в базе данных.
-        with connection.cursor() as cursor:
-            cursor.execute(f'''
-                update telegram.news set 
-                id = {id}, category_id = {category_id}, main_photo = '[{main_pva}]', title = '{title}',
-                short_text = '{short_text}', content = '{content}', deleted_at = '{deleted_at}',
-                created_at = '{created_at}', update_at = '{update_at}', main_news = '{main_news}', slug = {slug},
-                dateofevent = '{dateofevent}', organizer = '{organizer}', place = '{place}', created = '{created}',
-                view_count = '{view_count}'
-                where id = {id}
-            ''')
-            print('[INFO] Data was successfully update.')
+        # Если дата из базы данных не совпадает с датой последнего поста, то мы меняем запись.
+        if str(data_created[i]) != date_moscow_time_zone:
+            # Используем контекстный менеджер для обновления значений в базе данных.
+            with connection.cursor() as cursor:
+                cursor.execute(f'''
+                    update telegram.news set 
+                    id = {id}, category_id = {category_id}, main_photo = '[{main_pva}]', title = '{title}',
+                    short_text = '{short_text}', content = '{content}', deleted_at = '{deleted_at}',
+                    created_at = '{created_at}', update_at = '{update_at}', main_news = '{main_news}', slug = {slug},
+                    dateofevent = '{dateofevent}', organizer = '{organizer}', place = '{place}', created = '{created}',
+                    view_count = '{view_count}'
+                    where id = {id}
+                ''')
+                print('[INFO] Data was successfully update.')
 
 
 except Exception as _ex:
