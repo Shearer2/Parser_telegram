@@ -78,6 +78,12 @@ def audio_news(html) -> list:
     return main_audio
 
 
+def slug_news(html):
+    last_news_slug = html.findAll('div', class_='tgme_widget_message text_not_supported_wrap js-widget_message')[-1].attrs['data-post']
+    slug = last_news_slug.split('/')[-1]
+    return slug
+
+
 try:
     # Подключаемся к нашей базе данных.
     connection = connect(
@@ -95,25 +101,35 @@ try:
         name_channel = list(map(lambda x: x[0], cursor.fetchall()))
 
     with connection.cursor() as cursor:
+        #cursor.execute(
+        #    """SELECT created FROM telegram.news"""
+        #)
+        #data_created = list(map(lambda x: str(x[0]), cursor.fetchall()))
+        #print(data_created)
+
         cursor.execute(
-            """SELECT created FROM telegram.news"""
+            """SELECT slug FROM telegram.news"""
         )
-        data_created = list(map(lambda x: str(x[0]), cursor.fetchall()))
+        links = list(map(lambda x: str(x[0]), cursor.fetchall()))
 
     for i in range(len(name_channel)):
         r = requests.get(f'https://t.me/s/{name_channel[i]}/')  # Проверяем соединение со страницей.
         html = BS(r.content, 'html.parser')  # Получаем весь код страницы.
-        id = category_id = len(data_created) + i + 1  # Идентификатор по соответствию нумерации в цикле.
+        #id = category_id = len(data_created) + i + 1  # Идентификатор по соответствию нумерации в цикле.
+
+        category_id = len(links) + i + 1
         title, short_text, content = text_news(html)  # Здесь хранится текст.
         deleted_at, created_at, update_at, dateofevent, created = date_news(html)  # Здесь хранится дата.
         # Переводим время в нужный нам часовой пояс, так как при получении данных из базы данных оно переводится в наш
         # часовой пояс.
-        time_without_timezone = created.split('+')[0]
-        time_desired_timezone = str((int(created.split('+')[0][-8:-6]) + 3) % 24).zfill(2)
-        date_moscow_time_zone = time_without_timezone[:-8] + time_desired_timezone + time_without_timezone[-6:]
+
+        #time_without_timezone = created.split('+')[0]
+        #time_desired_timezone = str((int(created.split('+')[0][-8:-6]) + 3) % 24).zfill(2)
+        #date_moscow_time_zone = time_without_timezone[:-8] + time_desired_timezone + time_without_timezone[-6:]
+
         # Количество всех новостей.
         main_news = len(html.findAll('div', class_='tgme_widget_message_wrap js-widget_message_wrap'))
-        slug = 'Null'  # Не понял, что это такое.
+        slug = f'https://t.me/s/{name_channel[i]}/{slug_news(html)}'
         organizer = html.findAll('div', class_='tgme_widget_message_author accent_color')[-1].text.strip()  # Автор.
         place = organizer  # Местом я указал канал, с которого происходит парсинг постов.
         view_count = html.findAll('span', class_='tgme_widget_message_views')[-1].text  # Количество просмотров.
@@ -123,8 +139,14 @@ try:
         main_pva = main_photo + main_video + main_audio
 
         # Если дата из базы данных не совпадает с датой последнего поста, то мы меняем запись.
-        if date_moscow_time_zone not in data_created:
+
+        #if date_moscow_time_zone not in data_created and len(content) > 150 and title != '':
+
+        #if time_without_timezone not in data_created and len(content) > 150 and title != '':
+
         #if len(data_created) == 0 or str(data_created[i]) != date_moscow_time_zone:
+
+        if slug not in links and len(content) > 150 and title != '':
             # Используем контекстный менеджер для обновления значений в базе данных.
             #with connection.cursor() as cursor:
             #    cursor.execute(f'''
@@ -139,10 +161,10 @@ try:
             # Используем контекстный менеджер для добавления значений в базу данных.
             with connection.cursor() as cursor:
                 cursor.execute(f'''
-                    insert into telegram.news (id, category_id, main_photo, title, short_text, content, deleted_at,
+                    insert into telegram.news (category_id, main_photo, title, short_text, content, deleted_at,
                     created_at, update_at, main_news, slug, dateofevent, organizer, place, created, view_count)
-                    values ({id}, {category_id}, '[{main_pva}]', '{title}', '{short_text}', '{content}', '{deleted_at}',
-                    '{created_at}', '{update_at}', '{main_news}', {slug}, '{dateofevent}', '{organizer}', '{place}',
+                    values ({category_id}, '[{main_pva}]', '{title}', '{short_text}', '{content}', '{deleted_at}',
+                    '{created_at}', '{update_at}', '{main_news}', '{slug}', '{dateofevent}', '{organizer}', '{place}',
                     '{created}', '{view_count}')
                 ''')
                 print('[INFO] Data was successfully update.')
